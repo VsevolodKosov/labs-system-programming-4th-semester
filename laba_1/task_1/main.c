@@ -6,7 +6,7 @@ int main() {
     while (1) {
         printf("1 - Вход, 2 - Регистрация, 3 - Выход из программы: ");
         
-        char input[100];
+        char input[10];
         if (fgets(input, sizeof(input), stdin) == NULL) {
             printf("Ошибка ввода\n");
             continue;
@@ -23,68 +23,34 @@ int main() {
         
         if (choice == 3) {
             printf("Выход из программы\n");
-            clear_sanctions_file();
+            FILE* file = fopen("sanctions.txt", "w");
+            if (file) fclose(file);
             free_sanctions(&sanctions);
             break;
         }
 
         char* login = NULL;
-        size_t len = 0;
         printf("Введите логин (до 6 символов): ");
-        if (getline(&login, &len, stdin) == -1) {
+        if (read_line(&login) != OK) {
             printf("Ошибка ввода логина\n");
             continue;
         }
-        
-        size_t login_len = strlen(login);
-        if (login_len > 0 && login[login_len-1] == '\n') {
-            login[login_len-1] = '\0';
-            login_len--;
-        }
-        
-        // Проверка логина
-        int invalid_login = 0;
-        if (login_len == 0 || login_len > 6) {
-            printf("Некорректный логин! Должен быть от 1 до 6 символов\n");
-            invalid_login = 1;
-        }
-        
-        if (!invalid_login) {
-            for (size_t i = 0; i < login_len; i++) {
-                if (!isalnum((unsigned char)login[i])) {
-                    printf("Некорректный логин! Только буквы и цифры\n");
-                    invalid_login = 1;
-                    break;
-                }
-            }
-        }
-        
-        if (invalid_login) {
+
+        status_code login_status = is_valid_login(login);
+        if (login_status != OK) {
+            printf("Некорректный логин! Должен быть от 1 до 6 символов (буквы и цифры)\n");
             free(login);
             continue;
         }
-        
+
         if (choice == 2) {
-            FILE* db = fopen("database.txt", "r");
-            if (db) {
-                char user[7];
-                int file_pin;
-                int user_exists = 0;
-                while (fscanf(db, "%6s %d", user, &file_pin) == 2) {
-                    if (strcmp(user, login) == 0) {
-                        user_exists = 1;
-                        break;
-                    }
-                }
-                fclose(db);
-                if (user_exists) {
-                    printf("Ошибка: Пользователь '%s' уже существует\n", login);
-                    free(login);
-                    continue;
-                }
+            if (user_exists(login) == OK) {
+                printf("Ошибка: Пользователь '%s' уже существует\n", login);
+                free(login);
+                continue;
             }
         }
-        
+
         int pin;
         printf("Введите PIN-код (0-1000000): ");
         if (scanf("%d", &pin) != 1) {
@@ -95,39 +61,50 @@ int main() {
         }
         while (getchar() != '\n');
 
-        if (pin < 0 || pin > 1000000) {
+        status_code pin_status = is_valid_pin(pin);
+        if (pin_status != OK) {
             printf("Некорректный PIN! Должен быть от 0 до 1000000\n");
             free(login);
             continue;
         }
 
-        status_code res;
+        status_code auth_status;
         if (choice == 1) {
-            res = log_in(&login, login_len, pin);
+            auth_status = log_in(login, pin);
         } else {
-            res = sign_in(&login, login_len, pin);
+            auth_status = sign_in(login, pin);
         }
-        
-        if (res != OK) {
-            if (res == UndefinedUser) {
+
+        switch(auth_status) {
+            case OK:
+                printf("Успешная авторизация\n");
+                break;
+            case UndefinedUser:
                 printf("Ошибка: Пользователь не найден\n");
-            } else if (res == IncorrectLogin) {
+                free(login);
+                continue;
+            case IncorrectLogin:
                 printf("Ошибка: Неверный логин\n");
-            } else if (res == IncorrectPin) {
+                free(login);
+                continue;
+            case IncorrectPin:
                 printf("Ошибка: Неверный PIN\n");
-            } else if (res == OpenFileError) {
+                free(login);
+                continue;
+            case OpenFileError:
                 printf("Ошибка: Проблема с доступом к базе данных\n");
-            } else {
+                free(login);
+                continue;
+            default:
                 printf("Неизвестная ошибка авторизации\n");
-            }
-            free(login);
-            continue;
+                free(login);
+                continue;
         }
-        
+
         if (load_sanctions(&sanctions) != OK) {
             printf("Не удалось загрузить ограничения\n");
         }
-        
+
         int request_count = 0;
         int running = 1;
         
@@ -154,15 +131,27 @@ int main() {
             }
             
             switch (menu_choice) {
-                case 1: 
-                    get_current_time();
+                case 1: {
+                    char time_buf[9];
+                    if (get_current_time(time_buf, sizeof(time_buf)) == OK) {
+                        printf("Текущее время: %s\n", time_buf);
+                    } else {
+                        printf("Ошибка получения времени\n");
+                    }
                     break;
+                }
                     
-                case 2:  
-                    get_current_date();
+                case 2: {
+                    char date_buf[11];
+                    if (get_current_date(date_buf, sizeof(date_buf)) == OK) {
+                        printf("Текущая дата: %s\n", date_buf);
+                    } else {
+                        printf("Ошибка получения даты\n");
+                    }
                     break;
+                }
                     
-                case 3: {  
+                case 3: {
                     char date[11], flag[3];
                     printf("Введите дату (дд.мм.гггг): ");
                     if (scanf("%10s", date) != 1) {
@@ -177,7 +166,36 @@ int main() {
                         continue;
                     }
                     while (getchar() != '\n');
-                    howmuch(date, flag);
+
+                    char* result = NULL;
+                    status_code howmuch_res = howmuch(date, flag, &result);
+                    
+                    switch(howmuch_res) {
+                        case OK:
+                            printf("%s\n", result);
+                            break;
+                        case InvalidDateFormat:
+                            printf("Неверный формат даты. Используйте дд.мм.гггг\n");
+                            break;
+                        case DateBefore1970Error:
+                            printf("К сожалению, даты до 1970 года не обрабатываются программой\n");
+                            break;
+                        case InvalidDateValue:
+                            printf("Неверное значение даты. Проверьте день, месяц и год\n");
+                            break;
+                        case DateInFuture:
+                            printf("Дата не может быть в будущем\n");
+                            break;
+                        case InvalidFlag:
+                            printf("Неверный флаг. Допустимые флаги: -s, -m, -h, -y\n");
+                            break;
+                        case MemoryAllocationError:
+                            printf("Ошибка выделения памяти\n");
+                            break;
+                        default:
+                            printf("Неизвестная ошибка\n");
+                    }
+                    if (result) free(result);
                     break;
                 }
                     
@@ -186,7 +204,7 @@ int main() {
                     printf("Выход в меню авторизации\n");
                     break;
                     
-                case 5: {  
+                case 5: {
                     char username[7];
                     int limit;
                     printf("Введите имя пользователя и лимит запросов: ");
@@ -197,14 +215,35 @@ int main() {
                     }
                     while (getchar() != '\n');
                     
-                    if (strcmp(username, login) == 0) {
-                        printf("Ошибка: Нельзя накладывать ограничения на себя\n");
+                    printf("Введите 12345 для подтверждения: ");
+                    int confirmation;
+                    if (scanf("%d", &confirmation) != 1 || confirmation != 12345) {
+                        printf("Отмена операции\n");
+                        while (getchar() != '\n');
                         continue;
                     }
-                    
+                    while (getchar() != '\n');
+
                     status_code add_status = add_sanction(&sanctions, username, limit, login);
-                    if (add_status != OK) {
-                        printf("Ошибка установки ограничений\n");
+                    switch(add_status) {
+                        case OK:
+                            printf("Ограничения установлены для %s\n", username);
+                            break;
+                        case InputError:
+                            if (strcmp(username, login) == 0) {
+                                printf("Ошибка: Нельзя накладывать ограничения на себя\n");
+                            } else {
+                                printf("Ошибка: Неверные параметры санкции\n");
+                            }
+                            break;
+                        case UndefinedUser:
+                            printf("Ошибка: Пользователь не найден\n");
+                            break;
+                        case MemoryAllocationError:
+                            printf("Ошибка выделения памяти\n");
+                            break;
+                        default:
+                            printf("Неизвестная ошибка\n");
                     }
                     break;
                 }
