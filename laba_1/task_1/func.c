@@ -241,22 +241,36 @@ status_code howmuch(const char* time_str, const char* flag, char** result) {
     status_code parse_status = parse_date(time_str, &tm);
     if (parse_status != OK) return parse_status;
 
-    const char* format = NULL;
-    if (strcmp(flag, "-s") == 0) format = "Прошло секунд: %.0f";
-    else if (strcmp(flag, "-m") == 0) format = "Прошло минут: %.1f";
-    else if (strcmp(flag, "-h") == 0) format = "Прошло часов: %.1f";
-    else if (strcmp(flag, "-y") == 0) format = "Прошло лет: %.1f";
-    else return InvalidFlag;
-
     time_t t1 = mktime(&tm);
     time_t t2 = time(NULL);
     double diff = difftime(t2, t1);
 
-    int needed_size = snprintf(NULL, 0, format, diff) + 1;
+    const char* format = NULL;
+    double value = 0.0;
+
+    if (strcmp(flag, "-s") == 0) {
+        format = "Прошло секунд: %.0f";
+        value = diff;
+    } 
+    else if (strcmp(flag, "-m") == 0) {
+        format = "Прошло минут: %.1f";
+        value = diff / 60.0;
+    }
+    else if (strcmp(flag, "-h") == 0) {
+        format = "Прошло часов: %.1f";
+        value = diff / 3600.0;
+    }
+    else if (strcmp(flag, "-y") == 0) {
+        format = "Прошло лет: %.1f";
+        value = diff / (3600.0 * 24 * 365.25);
+    }
+    else return InvalidFlag;
+
+    int needed_size = snprintf(NULL, 0, format, value) + 1;
     *result = malloc(needed_size);
     if (!*result) return MemoryAllocationError;
     
-    snprintf(*result, needed_size, format, diff);
+    snprintf(*result, needed_size, format, value);
     return OK;
 }
 
